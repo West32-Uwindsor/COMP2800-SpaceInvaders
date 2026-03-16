@@ -1,18 +1,52 @@
-// --- 1. COMMUNICATION: PUB/SUB SYSTEM ---
+/**
+ * @file app.js
+ * @description Core game logic for the Space Invaders clone.
+ * This file handles game initialization, the pub/sub event system, object inheritance, 
+ * input handling, and the main animation loop.
+ */
+
+// ==========================================
+// SECTION 1: COMMUNICATION & CONSTANTS
+// ==========================================
+
+/**
+ * Defines message constants for the Pub/Sub system.
+ * Using constants prevents typos and makes refactoring easier.
+ * @constant {Object}
+ */
 const Messages = {
-    PLAYER_MOVE: 'PLAYER_MOVE',
+    KEY_EVENT_UP: "KEY_EVENT_UP",
+    KEY_EVENT_DOWN: "KEY_EVENT_DOWN",
+    KEY_EVENT_LEFT: "KEY_EVENT_LEFT",
+    KEY_EVENT_RIGHT: "KEY_EVENT_RIGHT",
 };
 
+/**
+ * EventEmitter class implements the Publish-Subscribe pattern.
+ * This separates input detection from game logic, making the code modular.
+ */
 class EventEmitter {
     constructor() {
-        this.listeners = {}; 
+        this.listeners = {};
     }
+
+    /**
+     * Subscribes a listener function to a specific message type.
+     * @param {string} message - The event name to listen for.
+     * @param {Function} listener - The callback function to execute.
+     */
     on(message, listener) {
         if (!this.listeners[message]) {
             this.listeners[message] = [];
         }
         this.listeners[message].push(listener);
     }
+
+    /**
+     * Publishes a message, triggering all subscribed listeners.
+     * @param {string} message - The event name to broadcast.
+     * @param {*} [payload=null] - Optional data to pass to the listeners.
+     */
     emit(message, payload = null) {
         if (this.listeners[message]) {
             this.listeners[message].forEach(listener => {
@@ -21,88 +55,194 @@ class EventEmitter {
         }
     }
 }
-const gameEvents = new EventEmitter();
 
-// --- 2. ARCHITECTURE: CLASS-BASED INHERITANCE ---
+// Global variables for game state
+const eventEmitter = new EventEmitter();
+const canvas = document.getElementById('gameCanvas');
+const ctx = canvas.getContext('2d');
+let gameObjects = [];
+let hero;
+
+// ==========================================
+// SECTION 2: GAME OBJECTS (INHERITANCE)
+// ==========================================
+
+/**
+ * Base class for all entities in the game.
+ * Defines common properties like position, size, and rendering logic.
+ */
 class GameObject {
+    /**
+     * @param {number} x - The starting horizontal coordinate.
+     * @param {number} y - The starting vertical coordinate.
+     * @param {number} width - The width of the object.
+     * @param {number} height - The height of the object.
+     * @param {string} color - The hex color code for the greybox rectangle.
+     */
     constructor(x, y, width, height, color) {
         this.x = x;
         this.y = y;
         this.width = width;
         this.height = height;
         this.color = color;
+        this.dead = false;
+        this.type = "";
     }
+
+    /**
+     * Draws the object onto the canvas using its properties.
+     * @param {CanvasRenderingContext2D} ctx - The canvas 2D rendering context.
+     */
     draw(ctx) {
         ctx.fillStyle = this.color;
         ctx.fillRect(this.x, this.y, this.width, this.height);
     }
 }
 
-class Player extends GameObject {
+/**
+ * Hero class extending GameObject to represent the player.
+ */
+class Hero extends GameObject {
     constructor(x, y) {
-        super(x, y, 45, 45, '#00FF00'); // Green Hero
-        this.speed = 20;
-    }
-    move(direction) {
-        if (direction === 'left' && this.x > 0) this.x -= this.speed;
-        if (direction === 'right' && this.x < canvas.width - this.width) this.x += this.speed;
+        super(x, y, 98, 75, '#00FF00'); // Green hero ship
+        this.type = "Hero";
+        this.speed = 15;
     }
 }
 
+/**
+ * Enemy class extending GameObject to represent alien ships.
+ * Includes automatic downward movement on a set interval.
+ */
 class Enemy extends GameObject {
     constructor(x, y) {
-        super(x, y, 40, 40, '#FF0000'); // Red Monster
+        super(x, y, 98, 50, '#FF0000'); // Red enemy ship
+        this.type = "Enemy";
+        
+        // Automatic movement: Moves down 5 pixels every 300ms
+        const id = setInterval(() => {
+            if (this.y < canvas.height - this.height) {
+                this.y += 5;
+            } else {
+                console.log('Enemy stopped at bottom boundary:', this.y);
+                clearInterval(id);
+            }
+        }, 300);
     }
 }
 
-// --- 3. GAME SETUP & RENDERING ---
-const canvas = document.getElementById('gameCanvas');
-const ctx = canvas.getContext('2d');
+// ==========================================
+// SECTION 3: GAME INITIALIZATION
+// ==========================================
 
-// Position hero at center-bottom
-const startX = canvas.width / 2 - 45; 
-const startY = canvas.height - canvas.height / 4; 
-const player = new Player(startX, startY);
+/**
+ * Generates a 5x5 grid of Enemy objects and adds them to the game array.
+ */
+function createEnemies() {
+    const MONSTER_TOTAL = 5;
+    const MONSTER_WIDTH = MONSTER_TOTAL * 108;
+    const START_X = (canvas.width - MONSTER_WIDTH) / 2;
+    const STOP_X = START_X + MONSTER_WIDTH;
 
-// Build 5x5 Enemy Formation
-const enemies = [];
-const ENEMY_TOTAL = 5;
-const ENEMY_SPACING = 98;
-const FORMATION_WIDTH = ENEMY_TOTAL * ENEMY_SPACING;
-const ENEMY_START_X = (canvas.width - FORMATION_WIDTH) / 2;
-const ENEMY_STOP_X = ENEMY_START_X + FORMATION_WIDTH;
-
-for (let x = ENEMY_START_X; x < ENEMY_STOP_X; x += ENEMY_SPACING) {
-    for (let y = 0; y < 50 * 5; y += 50) {
-        enemies.push(new Enemy(x, y));
+    for (let x = START_X; x < STOP_X; x += 108) {
+        for (let y = 0; y < 60 * 5; y += 60) {
+            gameObjects.push(new Enemy(x, y));
+        }
     }
 }
 
-// Subscribe to Events
-gameEvents.on(Messages.PLAYER_MOVE, (message, direction) => {
-    player.move(direction);
-});
+/**
+ * Creates the player Hero object and places it at the bottom center of the screen.
+ */
+function createHero() {
+    hero = new Hero(
+        canvas.width / 2 - 45,
+        canvas.height - canvas.height / 4
+    );
+    gameObjects.push(hero);
+}
 
-// Input Handling
-window.addEventListener('keydown', (event) => {
-    switch(event.key) {
-        case 'ArrowLeft': gameEvents.emit(Messages.PLAYER_MOVE, 'left'); break;
-        case 'ArrowRight': gameEvents.emit(Messages.PLAYER_MOVE, 'right'); break;
+/**
+ * Initializes the game state, spawns entities, and maps pub/sub movement listeners.
+ */
+function initGame() {
+    gameObjects = [];
+    createEnemies();
+    createHero();
+
+    // Map events to hero movement
+    eventEmitter.on(Messages.KEY_EVENT_UP, () => { hero.y -= hero.speed; });
+    eventEmitter.on(Messages.KEY_EVENT_DOWN, () => { hero.y += hero.speed; });
+    eventEmitter.on(Messages.KEY_EVENT_LEFT, () => { hero.x -= hero.speed; });
+    eventEmitter.on(Messages.KEY_EVENT_RIGHT, () => { hero.x += hero.speed; });
+}
+
+// ==========================================
+// SECTION 4: INPUT HANDLING
+// ==========================================
+
+/**
+ * Intercepts default browser behaviors (like scrolling) for game control keys.
+ * @param {KeyboardEvent} e - The fired keyboard event.
+ */
+const onKeyDown = function (e) {
+    switch (e.keyCode) {
+        case 37: // Left Arrow
+        case 38: // Up Arrow
+        case 39: // Right Arrow
+        case 40: // Down Arrow
+        case 32: // Spacebar
+            e.preventDefault();
+            break;
+        default:
+            break; 
+    }
+};
+window.addEventListener("keydown", onKeyDown);
+
+/**
+ * Listens for keydown events to trigger game actions via the Pub/Sub system.
+ * (Note: Changed from 'keyup' to 'keydown' for smoother, continuous gameplay).
+ */
+window.addEventListener("keydown", (evt) => {
+    if (evt.key === "ArrowUp") {
+        eventEmitter.emit(Messages.KEY_EVENT_UP);
+    } else if (evt.key === "ArrowDown") {
+        eventEmitter.emit(Messages.KEY_EVENT_DOWN);
+    } else if (evt.key === "ArrowLeft") {
+        eventEmitter.emit(Messages.KEY_EVENT_LEFT);
+    } else if (evt.key === "ArrowRight") {
+        eventEmitter.emit(Messages.KEY_EVENT_RIGHT);
     }
 });
 
-// Game Loop
-function gameLoop() {
-    // Draw black background
-    ctx.fillStyle = 'black';
+// ==========================================
+// SECTION 5: GAME LOOP
+// ==========================================
+
+/**
+ * Iterates through all active game objects and calls their draw methods.
+ * @param {CanvasRenderingContext2D} ctx - The canvas 2D rendering context.
+ */
+function drawGameObjects(ctx) {
+    gameObjects.forEach(go => go.draw(ctx));
+}
+
+// Initialize the game state before starting the loop
+initGame();
+
+/**
+ * Main Game Loop.
+ * Runs every 100 milliseconds to clear the screen and render the next frame.
+ */
+const gameLoopId = setInterval(() => {
+    // 1. Clear the canvas
+    ctx.clearRect(0, 0, canvas.width, canvas.height);
+    
+    // 2. Fill the black background
+    ctx.fillStyle = "black";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    // Draw objects
-    player.draw(ctx);
-    enemies.forEach(enemy => enemy.draw(ctx));
-    
-    requestAnimationFrame(gameLoop);
-}
-
-// Start the game
-gameLoop();
+    // 3. Render all updated objects
+    drawGameObjects(ctx);
+}, 100);
