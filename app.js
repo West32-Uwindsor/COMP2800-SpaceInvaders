@@ -1,7 +1,7 @@
 /**
  * @file app.js
  * @description Core game logic for the Space Invaders clone.
- * Now includes rectangle-based collision detection and laser projectiles.
+ * Now includes Scoring, Lives, and UI rendering.
  */
 
 // ==========================================
@@ -13,18 +13,17 @@ const Messages = {
     KEY_EVENT_DOWN: "KEY_EVENT_DOWN",
     KEY_EVENT_LEFT: "KEY_EVENT_LEFT",
     KEY_EVENT_RIGHT: "KEY_EVENT_RIGHT",
-    KEY_EVENT_SPACE: "KEY_EVENT_SPACE", // New Spacebar event
-    COLLISION_ENEMY_LASER: "COLLISION_ENEMY_LASER", // New Collision event
+    KEY_EVENT_SPACE: "KEY_EVENT_SPACE",
+    COLLISION_ENEMY_LASER: "COLLISION_ENEMY_LASER",
+    COLLISION_ENEMY_HERO: "COLLISION_ENEMY_HERO" // New Collision event
 };
 
 class EventEmitter {
     constructor() { this.listeners = {}; }
-    
     on(message, listener) {
         if (!this.listeners[message]) { this.listeners[message] = []; }
         this.listeners[message].push(listener);
     }
-    
     emit(message, payload = null) {
         if (this.listeners[message]) {
             this.listeners[message].forEach(listener => { listener(message, payload); });
@@ -42,10 +41,6 @@ let hero;
 // SECTION 2: COLLISION MATH
 // ==========================================
 
-/**
- * Evaluates separation between two rectangles. 
- * If none of the separation conditions are true, a collision has occurred.
- */
 function intersectRect(r1, r2) {
     return !(
         r2.left > r1.right ||
@@ -66,13 +61,9 @@ class GameObject {
         this.width = width;
         this.height = height;
         this.color = color;
-        this.dead = false; // Used to safely remove objects between frames
+        this.dead = false;
         this.type = "";
     }
-
-    /**
-     * Calculates the boundary coordinates of the object for collision detection.
-     */
     rectFromGameObject() {
         return {
             top: this.y,
@@ -81,7 +72,6 @@ class GameObject {
             right: this.x + this.width,
         };
     }
-
     draw(ctx) {
         ctx.fillStyle = this.color;
         ctx.fillRect(this.x, this.y, this.width, this.height);
@@ -93,25 +83,30 @@ class Hero extends GameObject {
         super(x, y, 98, 75, '#00FF00'); 
         this.type = "Hero";
         this.speed = 15;
-        this.cooldown = 0; // Prevents rapid-fire spamming
+        this.cooldown = 0;
+        this.life = 3;     // Initialize 3 lives
+        this.points = 0;   // Initialize score at 0
     }
 
     fire() {
-        // Create laser slightly offset to spawn from the ship's center
         gameObjects.push(new Laser(this.x + 45, this.y - 10));
-        this.cooldown = 500; // 500ms weapon cooldown
-
+        this.cooldown = 500;
         let id = setInterval(() => {
-            if (this.cooldown > 0) {
-                this.cooldown -= 100;
-            } else {
-                clearInterval(id);
-            }
+            if (this.cooldown > 0) this.cooldown -= 100;
+            else clearInterval(id);
         }, 100);
     }
-
-    canFire() {
-        return this.cooldown === 0;
+    canFire() { return this.cooldown === 0; }
+    
+    // Core Feedback Systems
+    decrementLife() {
+        this.life--;
+        if (this.life === 0) {
+            this.dead = true;
+        }
+    }
+    incrementPoints() {
+        this.points += 100;
     }
 }
 
@@ -119,30 +114,21 @@ class Enemy extends GameObject {
     constructor(x, y) {
         super(x, y, 98, 50, '#FF0000');
         this.type = "Enemy";
-        
         const id = setInterval(() => {
-            if (this.y < canvas.height - this.height) {
-                this.y += 5;
-            } else {
-                clearInterval(id);
-            }
+            if (this.y < canvas.height - this.height) this.y += 5;
+            else clearInterval(id);
         }, 300);
     }
 }
 
-/**
- * Laser projectile that travels upward and handles its own lifecycle.
- */
 class Laser extends GameObject {
     constructor(x, y) {
-        super(x, y, 9, 33, '#FFFF00'); // Yellow laser
+        super(x, y, 9, 33, '#FFFF00'); 
         this.type = 'Laser';
-        
         let id = setInterval(() => {
-            if (this.y > 0) {
-                this.y -= 15;
-            } else {
-                this.dead = true; // Mark dead if it flies off-screen
+            if (this.y > 0) this.y -= 15;
+            else {
+                this.dead = true;
                 clearInterval(id);
             }
         }, 100);
@@ -150,12 +136,39 @@ class Laser extends GameObject {
 }
 
 // ==========================================
-// SECTION 4: GAME INITIALIZATION & EVENTS
+// SECTION 4: UI DRAWING FUNCTIONS
+// ==========================================
+
+/**
+ * Draws the player's remaining lives as simple red squares representing hearts.
+ */
+function drawLife() {
+    const START_POS = canvas.width - 180;
+    for(let i=0; i < hero.life; i++ ) {
+        // Greyboxing: using small red squares instead of lifeImg to represent hearts
+        ctx.fillStyle = '#FF69B4'; // Pink/Red color for life
+        ctx.fillRect(START_POS + (45 * (i+1)), canvas.height - 37, 30, 30);
+    }
+}
+
+/**
+ * Renders the score as a large number at the bottom center of the screen.
+ */
+function drawPoints() {
+    ctx.font = "40px Arial";
+    ctx.fillStyle = "white";
+    ctx.textAlign = "center";
+    ctx.fillText(hero.points.toString(), canvas.width / 2, canvas.height - 20);
+}
+
+// ==========================================
+// SECTION 5: GAME INITIALIZATION & EVENTS
 // ==========================================
 
 function createEnemies() {
     const MONSTER_TOTAL = 5;
-    const MONSTER_WIDTH = MONSTER_TOTAL * 108;
+    // Maintained user's wider spacing
+    const MONSTER_WIDTH = MONSTER_TOTAL * 108; 
     const START_X = (canvas.width - MONSTER_WIDTH) / 2;
     const STOP_X = START_X + MONSTER_WIDTH;
 
@@ -176,35 +189,35 @@ function initGame() {
     createEnemies();
     createHero();
 
-    // Movement Events
     eventEmitter.on(Messages.KEY_EVENT_UP, () => { if (hero.y > 0) hero.y -= hero.speed; });
     eventEmitter.on(Messages.KEY_EVENT_DOWN, () => { if (hero.y < canvas.height - hero.height) hero.y += hero.speed; });
     eventEmitter.on(Messages.KEY_EVENT_LEFT, () => { if (hero.x > 0) hero.x -= hero.speed; });
     eventEmitter.on(Messages.KEY_EVENT_RIGHT, () => { if (hero.x < canvas.width - hero.width) hero.x += hero.speed; });
 
-    // Firing Event
-    eventEmitter.on(Messages.KEY_EVENT_SPACE, () => {
-        if (hero.canFire()) {
-            hero.fire();
-        }
-    });
+    eventEmitter.on(Messages.KEY_EVENT_SPACE, () => { if (hero.canFire()) hero.fire(); });
 
-    // Collision Event
-    eventEmitter.on(Messages.COLLISION_ENEMY_LASER, (message, { first, second }) => {
+    // Enemy hit by Laser
+    eventEmitter.on(Messages.COLLISION_ENEMY_LASER, (_, { first, second }) => {
         first.dead = true;
         second.dead = true;
+        hero.incrementPoints();
+    });
+
+    // Enemy crashes into Hero
+    eventEmitter.on(Messages.COLLISION_ENEMY_HERO, (_, { enemy }) => {
+        enemy.dead = true;
+        hero.decrementLife();
     });
 }
 
 // ==========================================
-// SECTION 5: INPUT HANDLING
+// SECTION 6: INPUT HANDLING
 // ==========================================
 
 const onKeyDown = function (e) {
     switch (e.keyCode) {
         case 37: case 38: case 39: case 40: case 32: 
-            e.preventDefault(); 
-            break;
+            e.preventDefault(); break;
     }
 };
 window.addEventListener("keydown", onKeyDown);
@@ -214,30 +227,32 @@ window.addEventListener("keydown", (evt) => {
     else if (evt.key === "ArrowDown") eventEmitter.emit(Messages.KEY_EVENT_DOWN);
     else if (evt.key === "ArrowLeft") eventEmitter.emit(Messages.KEY_EVENT_LEFT);
     else if (evt.key === "ArrowRight") eventEmitter.emit(Messages.KEY_EVENT_RIGHT);
-    else if (evt.keyCode === 32) eventEmitter.emit(Messages.KEY_EVENT_SPACE); // Spacebar detection
+    else if (evt.keyCode === 32) eventEmitter.emit(Messages.KEY_EVENT_SPACE);
 });
 
 // ==========================================
-// SECTION 6: THE GAME LOOP
+// SECTION 7: THE GAME LOOP
 // ==========================================
 
-/**
- * Checks for intersections between lasers and enemies, emitting collision events.
- * Cleans up "dead" objects so they are removed from the screen safely.
- */
 function updateGameObjects() {
     const enemies = gameObjects.filter(go => go.type === 'Enemy');
     const lasers = gameObjects.filter(go => go.type === "Laser");
   
+    // Laser vs Enemy Check
     lasers.forEach((laser) => {
         enemies.forEach((enemy) => {
             if (intersectRect(laser.rectFromGameObject(), enemy.rectFromGameObject())) {
-                eventEmitter.emit(Messages.COLLISION_ENEMY_LASER, {
-                    first: laser,
-                    second: enemy,
-                });
+                eventEmitter.emit(Messages.COLLISION_ENEMY_LASER, { first: laser, second: enemy });
             }
         });
+    });
+
+    // Hero vs Enemy Check
+    enemies.forEach(enemy => {
+        const heroRect = hero.rectFromGameObject();
+        if (intersectRect(heroRect, enemy.rectFromGameObject())) {
+            eventEmitter.emit(Messages.COLLISION_ENEMY_HERO, { enemy });
+        }
     });
 
     gameObjects = gameObjects.filter(go => !go.dead);
@@ -254,6 +269,11 @@ const gameLoopId = setInterval(() => {
     ctx.fillStyle = "black";
     ctx.fillRect(0, 0, canvas.width, canvas.height);
     
-    updateGameObjects(); // Run collision checks
+    updateGameObjects();
     drawGameObjects(ctx);
+    
+    // Render UI Elements on top of game objects
+    drawPoints();
+    drawLife();
+    
 }, 100);
